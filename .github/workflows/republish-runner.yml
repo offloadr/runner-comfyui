@@ -2,11 +2,21 @@ name: Republish runner image to GHCR
 
 on:
   workflow_dispatch:
+    inputs:
+      source_tag:
+        description: Source image tag to mirror from oci.offloadr.app
+        required: false
+        type: string
+      source_sha:
+        description: Source commit SHA for logging
+        required: false
+        type: string
+      source_repo:
+        description: Source repository for logging
+        required: false
+        type: string
   schedule:
     - cron: "17 3 * * *"
-  push:
-    branches:
-      - main
 
 permissions:
   contents: read
@@ -17,7 +27,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SRC_IMAGE: oci.offloadr.app/runner/nvidia:latest
   DEST_IMAGE: ghcr.io/${{ github.repository_owner }}/runner-nvidia:latest
 
 jobs:
@@ -25,6 +34,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Resolve source image
+        id: resolve_source
+        env:
+          DISPATCH_SOURCE_REPO: ${{ inputs.source_repo }}
+          DISPATCH_SOURCE_SHA: ${{ inputs.source_sha }}
+          DISPATCH_SOURCE_TAG: ${{ inputs.source_tag }}
+        run: |
+          source_tag="${DISPATCH_SOURCE_TAG:-latest}"
+          source_image="oci.offloadr.app/runner/nvidia:${source_tag}"
+
+          echo "source_image=${source_image}" >> "${GITHUB_OUTPUT}"
+          echo "Using source image: ${source_image}"
+
+          if [ -n "${DISPATCH_SOURCE_REPO:-}" ]; then
+            echo "Source repository: ${DISPATCH_SOURCE_REPO}"
+          fi
+
+          if [ -n "${DISPATCH_SOURCE_SHA:-}" ]; then
+            echo "Source revision: ${DISPATCH_SOURCE_SHA}"
+          fi
+
       - name: Install skopeo
         run: |
           sudo apt-get update
@@ -40,12 +70,12 @@ jobs:
       - name: Copy image from source registry to GHCR
         run: |
           skopeo copy --all \
-            docker://${SRC_IMAGE} \
+            docker://${{ steps.resolve_source.outputs.source_image }} \
             docker://${DEST_IMAGE}
 
       - name: Verify copied digest
         run: |
-          src_digest="$(skopeo inspect --format '{{.Digest}}' docker://${SRC_IMAGE})"
+          src_digest="$(skopeo inspect --format '{{.Digest}}' docker://${{ steps.resolve_source.outputs.source_image }})"
           dest_digest="$(skopeo inspect --format '{{.Digest}}' docker://${DEST_IMAGE})"
 
           echo "Source digest: ${src_digest}"
