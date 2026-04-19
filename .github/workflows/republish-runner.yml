@@ -1,0 +1,57 @@
+name: Republish runner image to GHCR
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: republish-runner-ghcr
+  cancel-in-progress: false
+
+env:
+  SRC_IMAGE: oci.offloadr.app/runner/nvidia:latest
+  DEST_IMAGE: ghcr.io/${{ github.repository_owner }}/runner-nvidia:latest
+
+jobs:
+  republish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            skopeo login ghcr.io \
+              --username "${{ github.actor }}" \
+              --password-stdin
+
+      - name: Copy image from source registry to GHCR
+        run: |
+          skopeo copy --all \
+            docker://${SRC_IMAGE} \
+            docker://${DEST_IMAGE}
+
+      - name: Verify copied digest
+        run: |
+          src_digest="$(skopeo inspect --format '{{.Digest}}' docker://${SRC_IMAGE})"
+          dest_digest="$(skopeo inspect --format '{{.Digest}}' docker://${DEST_IMAGE})"
+
+          echo "Source digest: ${src_digest}"
+          echo "Destination digest: ${dest_digest}"
+
+          if [ "${src_digest}" != "${dest_digest}" ]; then
+            echo "Mirrored digest does not match source digest" >&2
+            exit 1
+          fi
