@@ -7,6 +7,14 @@ on:
         description: Source image tag to mirror from oci.offloadr.app
         required: false
         type: string
+      target_tag:
+        description: Destination GHCR tag to publish
+        required: false
+        type: choice
+        default: latest
+        options:
+          - latest
+          - master
       source_sha:
         description: Source commit SHA for logging
         required: false
@@ -27,7 +35,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DEST_IMAGE: ghcr.io/${{ github.repository_owner }}/runner-nvidia:latest
+  DEST_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/runner-nvidia
 
 jobs:
   republish:
@@ -40,12 +48,25 @@ jobs:
           DISPATCH_SOURCE_REPO: ${{ inputs.source_repo }}
           DISPATCH_SOURCE_SHA: ${{ inputs.source_sha }}
           DISPATCH_SOURCE_TAG: ${{ inputs.source_tag }}
+          DISPATCH_TARGET_TAG: ${{ inputs.target_tag }}
         run: |
-          source_tag="${DISPATCH_SOURCE_TAG:-latest}"
+          target_tag="${DISPATCH_TARGET_TAG:-latest}"
+          case "${target_tag}" in
+            latest|master) ;;
+            *)
+              echo "Unsupported target_tag: ${target_tag}" >&2
+              exit 1
+              ;;
+          esac
+
+          source_tag="${DISPATCH_SOURCE_TAG:-${target_tag}}"
           source_image="oci.offloadr.app/runner/nvidia:${source_tag}"
+          dest_image="${DEST_IMAGE_REPOSITORY}:${target_tag}"
 
           echo "source_image=${source_image}" >> "${GITHUB_OUTPUT}"
+          echo "dest_image=${dest_image}" >> "${GITHUB_OUTPUT}"
           echo "Using source image: ${source_image}"
+          echo "Publishing destination image: ${dest_image}"
 
           if [ -n "${DISPATCH_SOURCE_REPO:-}" ]; then
             echo "Source repository: ${DISPATCH_SOURCE_REPO}"
@@ -71,12 +92,12 @@ jobs:
         run: |
           skopeo copy --all \
             docker://${{ steps.resolve_source.outputs.source_image }} \
-            docker://${DEST_IMAGE}
+            docker://${{ steps.resolve_source.outputs.dest_image }}
 
       - name: Verify copied digest
         run: |
           src_digest="$(skopeo inspect --format '{{.Digest}}' docker://${{ steps.resolve_source.outputs.source_image }})"
-          dest_digest="$(skopeo inspect --format '{{.Digest}}' docker://${DEST_IMAGE})"
+          dest_digest="$(skopeo inspect --format '{{.Digest}}' docker://${{ steps.resolve_source.outputs.dest_image }})"
 
           echo "Source digest: ${src_digest}"
           echo "Destination digest: ${dest_digest}"
